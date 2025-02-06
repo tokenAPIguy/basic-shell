@@ -1,75 +1,99 @@
 ﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 
 while (true) {
     Console.Write("$ ");
-    string command = Console.ReadLine()!;
+    string input = Console.ReadLine()!;
 
-    if (string.IsNullOrEmpty(command)) {
+    if (string.IsNullOrEmpty(input)) {
         continue;
     }
     
-    if (command == "exit 0") {
+    if (input == "exit 0") {
         break;
     }
+
+    if (input.StartsWith("cd", StringComparison.OrdinalIgnoreCase)) {
+        input = input.Substring(2).Trim();
+        try {
+            Builtin.Cd(input);
+        }
+        catch (DirectoryNotFoundException e) {
+            Console.WriteLine($"cd: {input}: No such file or directory");
+        }
+        continue;
+    } 
     
-    if (command.StartsWith("echo", StringComparison.OrdinalIgnoreCase)) {
-        command = command.Substring(4).Trim();
-        Console.WriteLine(Builtin.Echo(command));
+    if (input.StartsWith("echo", StringComparison.OrdinalIgnoreCase)) {
+        input = input.Substring(4).Trim();
+        Console.WriteLine(Builtin.Echo(input));
         continue;
     }
 
-    if (command.StartsWith("type", StringComparison.OrdinalIgnoreCase)) {
-        command = command.Substring(4).Trim();
-        Console.WriteLine(Builtin.Type(command));
+    if (input.StartsWith("type", StringComparison.OrdinalIgnoreCase)) {
+        input = input.Substring(4).Trim();
+        Console.WriteLine(Builtin.Type(input));
         continue;
     }
 
-    if (command.StartsWith("pwd", StringComparison.OrdinalIgnoreCase)) {
-        command = command.Substring(3).Trim();
-        Console.WriteLine(Builtin.Pwd(command));
+    if (input.StartsWith("pwd", StringComparison.OrdinalIgnoreCase)) {
+        input = input.Substring(3).Trim();
+        Console.WriteLine(Builtin.Pwd(input));
         continue;
     }
 
-    string[] parts = command.Split(" ");
+    string[] parts = input.Split(" ");
     
     if (Helpers.IsExecutable(parts[0]) != string.Empty) {
         Helpers.RunExecutable(parts[0], parts[1..]);
         continue;
     }
     
-    Console.WriteLine($"{command}: command not found");
+    Console.WriteLine($"{input}: command not found");
 }
 
 internal static class Builtin {
-    public static string Echo(string command) {
-        return command;
+    public static string Echo(string input) {
+        return input;
     }
 
-    public static string Pwd(string command) {
+    public static void Cd(string input) {
+        if (input.Contains('.')) {
+            string workingDirectory = Directory.GetCurrentDirectory();
+            string fullPath = Path.Join(workingDirectory, input);
+            
+            if (File.Exists(fullPath)) {
+                Directory.SetCurrentDirectory(fullPath); 
+            }
+        }
+        Directory.SetCurrentDirectory(input);
+    }
+
+    public static string Pwd(string input) {
         return Directory.GetCurrentDirectory();
     }
 
-    public static string Type(string command) {
-        if (Enum.TryParse(command, true, out Builtins result)) {
-            return $"{command} is a shell builtin";
+    public static string Type(string input) {
+        if (Enum.TryParse(input, true, out Builtins result)) {
+            return $"{input} is a shell builtin";
         }
 
-        string path = Helpers.IsExecutable(command);
+        string path = Helpers.IsExecutable(input);
         return path != string.Empty 
-            ? $"{command} is {path}" 
-            : $"{command}: not found";
+            ? $"{input} is {path}" 
+            : $"{input}: not found";
     }
 }
 
 internal static class Helpers {
-    public static string IsExecutable(string command) {
+    public static string IsExecutable(string input) {
         string args = Environment.GetEnvironmentVariable("PATH")!;
-        string[] paths = args.Split(":"); // on windows this needs to be a semicolon 
+        string[] paths = args.Split(";"); // on windows this needs to be a semicolon 
         
         foreach (string path in paths) {
-            string fullPath = Path.Combine(path, command);
+            string fullPath = Path.Combine(path, input);
             if (File.Exists(fullPath)) {
                 return fullPath;
             }
@@ -83,9 +107,9 @@ internal static class Helpers {
 }
 
 internal enum Builtins {
+    Cd,
     Echo,
     Pwd,    
     Type,
     Exit
 }
-
