@@ -7,105 +7,152 @@ while (true) {
     Console.Write("$ ");
     string input = Console.ReadLine()!;
 
-    if (string.IsNullOrEmpty(input)) {
+    var parsed = CommandParser.Parse(input);
+    var cmd = parsed.cmd;
+    var parts = parsed.parts != null ? string.Join(" ", parsed.parts) : string.Empty;
+
+    if (string.IsNullOrWhiteSpace(cmd)) {
         continue;
     }
-    
-    if (input == "exit 0") {
-        break;
-    }
 
-    if (input.StartsWith("cd", StringComparison.OrdinalIgnoreCase)) {
-        input = input.Substring(2).Trim();
-        try {
-            Builtin.Cd(input);
+    if (cmd == "exit") {
+        if (Builtin.Exit(parts)) {
+            break;
         }
-        catch (DirectoryNotFoundException e) {
-            Console.WriteLine($"cd: {input}: No such file or directory");
+    }
+
+    if (Helpers.IsExecutable(cmd, out _)) {
+        if (parsed.parts != null) {
+            Helpers.RunExecutable(cmd, parsed.parts);
+        }
+        else {
+            Helpers.RunExecutable(cmd);
         }
         continue;
-    } 
-    
-    if (input.StartsWith("echo", StringComparison.OrdinalIgnoreCase)) {
-        input = input.Substring(4).Trim();
-        Console.WriteLine(Builtin.Echo(input));
-        continue;
-    }
-
-    if (input.StartsWith("type", StringComparison.OrdinalIgnoreCase)) {
-        input = input.Substring(4).Trim();
-        Console.WriteLine(Builtin.Type(input));
-        continue;
-    }
-
-    if (input.StartsWith("pwd", StringComparison.OrdinalIgnoreCase)) {
-        input = input.Substring(3).Trim();
-        Console.WriteLine(Builtin.Pwd(input));
-        continue;
-    }
-
-    string[] parts = input.Split(" ");
-    
-    if (Helpers.IsExecutable(parts[0]) != string.Empty) {
-        Helpers.RunExecutable(parts[0], parts[1..]);
-        continue;
     }
     
-    Console.WriteLine($"{input}: command not found");
+    switch (cmd) {
+        case "cd":
+            Builtin.Cd(parts);
+            continue;
+        case "echo":
+            Console.WriteLine(Builtin.Echo(parts));
+            continue; 
+        case "pwd":
+            Console.WriteLine(Builtin.Pwd());
+            continue;
+        case "type":
+            Console.WriteLine(Builtin.Type(parts));
+            continue;
+        default:
+            Console.WriteLine($"{input}: command not found");
+            continue;
+    }
 }
 
 internal static class Builtin {
+    public static void Cd(string input) {
+        PlatformID OS = Environment.OSVersion.Platform;
+        if (string.IsNullOrEmpty(input) || input == "~") {
+            string? home = OS.ToString().Substring(0, 3).Contains("win", StringComparison.CurrentCultureIgnoreCase)
+                ? Environment.GetEnvironmentVariable("USERPROFILE")
+                : Environment.GetEnvironmentVariable("HOME");
+        
+            if (home != null) {
+                try {
+                    Directory.SetCurrentDirectory(home);
+                }
+                catch (Exception e) {
+                    Console.WriteLine(e);
+                    throw;
+                }
+                return;
+            }
+            Console.WriteLine("Home directory is not set in environment variables.");
+            return;
+        }
+
+        // Handle relative paths
+        if (input.Contains('.')) {
+            string workingDirectory = Directory.GetCurrentDirectory();
+            string fullPath = Path.Join(workingDirectory, input);
+
+            if (File.Exists(fullPath)) {
+                Directory.SetCurrentDirectory(fullPath);
+            }
+            return;
+        }
+
+        Directory.SetCurrentDirectory(input);
+    }
+    
     public static string Echo(string input) {
         return input;
     }
 
-    public static void Cd(string input) {
-        if (input.Contains('.')) {
-            string workingDirectory = Directory.GetCurrentDirectory();
-            string fullPath = Path.Join(workingDirectory, input);
-            
-            if (File.Exists(fullPath)) {
-                Directory.SetCurrentDirectory(fullPath); 
-            }
-        }
-        Directory.SetCurrentDirectory(input);
+    public static bool Exit(string input) {
+        return input == "0";
     }
-
-    public static string Pwd(string input) {
+    
+    public static string Pwd() {
         return Directory.GetCurrentDirectory();
     }
 
     public static string Type(string input) {
-        if (Enum.TryParse(input, true, out Builtins result)) {
+        if (Helpers.IsBuiltin(input)) {
             return $"{input} is a shell builtin";
         }
-
-        string path = Helpers.IsExecutable(input);
-        return path != string.Empty 
-            ? $"{input} is {path}" 
-            : $"{input}: not found";
+        
+        return Helpers.IsExecutable(input, out var fullPath)
+            ? $"{input} is {fullPath}"
+            : $"{input} not found";
     }
 }
-
-internal static class Helpers {
-    public static string IsExecutable(string input) {
-        string args = Environment.GetEnvironmentVariable("PATH")!;
-        string[] paths = args.Split(";"); // on windows this needs to be a semicolon 
-        
-        foreach (string path in paths) {
-            string fullPath = Path.Combine(path, input);
-            if (File.Exists(fullPath)) {
-                return fullPath;
-            }
+internal static class CommandParser {
+    public static (string? cmd, List<string>? parts) Parse(string input) {
+        if (string.IsNullOrEmpty(input)) {
+            return (string.Empty, null);
         }
-        return string.Empty;
+        
+        List<string> chunks = input.ToLower().Trim().Split(" ").ToList();
+        
+        string cmd = chunks[0];
+        List<string> parts = chunks[1..];
+        
+        return (cmd, parts);
+    }
+}
+internal static class Helpers {
+    public static bool IsBuiltin(string cmd) {
+        return Enum.TryParse(cmd, true, out Builtins result);
     }
 
-    public static void RunExecutable(string executable, string[] args) {
+    public static bool IsExecutable(string cmd, out string fullPath) {
+        string? args = Environment.GetEnvironmentVariable("PATH");
+        if (args != null) {
+            PlatformID OS = Environment.OSVersion.Platform; 
+            string[] paths = OS.ToString().Substring(0, 3).Contains("win", StringComparison.CurrentCultureIgnoreCase) ? args.Split(";") : args.Split(":"); 
+
+            foreach (string path in paths) {
+                fullPath = Path.Join(path, cmd);
+                if (File.Exists(fullPath)) {
+                    return (true);
+                }
+            }
+        }
+
+        fullPath = string.Empty;
+        return (false);
+    }
+
+    public static void RunExecutable(string executable) {
+        Process.Start(executable);
+    }
+    
+    public static void RunExecutable(string executable, List<string> args) {
         Process.Start(executable, args);
     }
 }
-
 internal enum Builtins {
     Cd,
     Echo,
